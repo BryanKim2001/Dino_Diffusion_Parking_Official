@@ -31,7 +31,12 @@ parking_model:
   final_dim: [294, 294]
   bev_down_sample: 14
   use_depth_distribution: 1
-  backbone: "dinov2_vitb14_reg" # "dinov2_vitb14_reg", "dinov2_vitl14_reg"
+  backbone: "dinov2_vitb14_reg"
+
+  use_unik3d: false
+  unik3d_model: "lpiccinelli/unik3d-vitb"
+  unik3d_temperature: 1.0
+  use_unik3d_rays: false
 
   # segmentation
   seg_classes: 3

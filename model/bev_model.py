@@ -2,6 +2,7 @@ import torch
 
 from torch import nn
 from model.cam_encoder import CamEncoder, DinoCamEncoder
+from model.unik3d_integration import Unik3DDepthModule
 from tool.config import Configuration
 from tool.geometry import VoxelsSumming, calculate_birds_eye_view_parameters
 from torchvision.transforms import Resize
@@ -25,13 +26,21 @@ class BevModel(nn.Module):
         self.frustum = self.create_frustum()
         self.depth_channel, _, _, _ = self.frustum.shape
         
-        # INFO: Now we are using DINO V2 as our image processing backbone
         if "efficient" in cfg.backbone:
             self.cam_encoder = CamEncoder(self.cfg, self.depth_channel)
         elif "dino" in cfg.backbone:
             self.cam_encoder = DinoCamEncoder(self.cfg, self.depth_channel)
         else:
             raise NotImplementedError
+
+        self.use_unik3d = getattr(cfg, 'use_unik3d', False)
+        if self.use_unik3d:
+            unik3d_model = getattr(cfg, 'unik3d_model', 'lpiccinelli/unik3d-vitb')
+            print(f"[BevModel] Using Unik3D for depth: {unik3d_model}")
+            self.unik3d_depth = Unik3DDepthModule(cfg, model_name=unik3d_model)
+        else:
+            self.unik3d_depth = None
+            print("[BevModel] Using learned depth distribution")
 
     def create_frustum(self):
 
@@ -102,23 +111,22 @@ class BevModel(nn.Module):
 
 
     def encoder_forward(self, images):
-        """ Use DINO features in the depth estimation and downstreaming tasks """
-
         b, n, c, h, w = images.shape
         images = images.view(b * n, c, h, w)
-        # INFO: Obtain the DINO embeddings and the depth embeddings (also from DINO)
         x, depth = self.cam_encoder(images)
 
-        # INFO: Obtain the depth distribution
-        depth_prob = depth.softmax(dim=1)
+        if self.use_unik3d and self.unik3d_depth is not None:
+            depth_prob, metric_depth, _ = self.unik3d_depth(images)
+        else:
+            depth_prob = depth.softmax(dim=1)
+
         if self.cfg.use_depth_distribution:
-            x = depth_prob.unsqueeze(1) * x.unsqueeze(2) 
+            x = depth_prob.unsqueeze(1) * x.unsqueeze(2)
         else:
             x = x.unsqueeze(2).repeat(1, 1, self.depth_channel, 1, 1)
 
-        # INFO: Rearrange the dimensions
         x = x.view(b, n, *x.shape[1:])
-        x = x.permute(0, 1, 3, 4, 5, 2) # x dimensions: [b, n, depth_bin, h, w, feature_channel]
+        x = x.permute(0, 1, 3, 4, 5, 2)
         return x, depth_prob
 
     def proj_bev_feature(self, geom, image_feature):
