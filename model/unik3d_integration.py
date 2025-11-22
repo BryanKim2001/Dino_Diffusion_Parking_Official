@@ -15,7 +15,7 @@ class Unik3DDepthModule(nn.Module):
             self.unik3d.eval()
             for param in self.unik3d.parameters():
                 param.requires_grad = False
-            print("✓ Unik3D loaded successfully (frozen)")
+            print("Unik3D loaded successfully (frozen)")
         except ImportError:
             raise ImportError(
                 "Unik3D not installed. Install from: https://github.com/lpiccinelli-eth/UniK3D"
@@ -28,6 +28,10 @@ class Unik3DDepthModule(nn.Module):
             self.d_bound[2]
         )
         self.num_bins = len(self.depth_bins)
+        self.down_sample = cfg.bev_down_sample
+        self.final_h, self.final_w = cfg.final_dim
+        self.out_h = self.final_h // self.down_sample
+        self.out_w = self.final_w // self.down_sample
 
         self.temperature = nn.Parameter(
             torch.tensor(getattr(cfg, 'unik3d_temperature', 1.0)),
@@ -41,6 +45,14 @@ class Unik3DDepthModule(nn.Module):
         D = self.num_bins
         device = metric_depth.device
 
+        if H != self.out_h or W != self.out_w:
+            metric_depth = F.interpolate(
+                metric_depth.unsqueeze(1),
+                size=(self.out_h, self.out_w),
+                mode="bilinear",
+                align_corners=False,
+            ).squeeze(1)
+        
         depth_bins = self.depth_bins.to(device)
 
         metric_depth = metric_depth.unsqueeze(1)
